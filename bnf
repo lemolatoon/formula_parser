@@ -1,0 +1,4 @@
+<expr>      := <and_or> ("->" <and_or>)?
+<and_or>    := <not> ("and" <not> | "or" <not>)?
+<not>       := "!"? <primary>
+<primary>   := <letter> | "(" <expr> ")" 
