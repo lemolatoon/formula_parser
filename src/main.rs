@@ -35,42 +35,49 @@ fn tokenize(input: String) -> Vec<Token> {
             continue;
         }
 
-        if let '-' | '!' | '(' | ')' = *current_char {
-            // punctuator at least
-            // count length of punctuator
-            let len = input[(i + 1)..]
-                .iter()
-                .take_while(|&&c| !matches!(c, ' ' | '\n' | '\t' | 'a'..='z' | 'A'..='Z' | '!'))
-                .count()
-                + 1;
-            dbg!(len);
-            let slice = input[i..i + len].into_iter().collect::<String>();
-            dbg!(&slice);
-            let reserved = (vec!["->", "!", "(", ")"])
-                .into_iter()
-                .map(|s| s.to_owned())
-                .collect::<HashSet<String>>();
-            if reserved.contains(&slice) {
-                tokens.push(TkReserved(slice));
+        match *current_char {
+            '-' | '!' | '(' | ')' => {
+                // punctuator at least
+                // count length of punctuator
+                let len = input[(i + 1)..]
+                    .iter()
+                    .take_while(|&&c| !matches!(c, ' ' | '\n' | '\t' | 'a'..='z' | 'A'..='Z' | '!'))
+                    .count()
+                    + 1;
+                dbg!(len);
+                let slice = input[i..i + len].into_iter().collect::<String>();
+                dbg!(&slice);
+                let reserved = (vec!["->", "!", "(", ")"])
+                    .into_iter()
+                    .map(|s| s.to_owned())
+                    .collect::<HashSet<String>>();
+                if reserved.contains(&slice) {
+                    tokens.push(TkReserved(slice));
+                }
+                i += len;
             }
-            i += len;
-        } else {
-            let len = input[i..]
-                .iter()
-                .take_while(|&&c| !c.is_whitespace() && !matches!(c, ')' | '-'))
-                .count();
-            dbg!(len);
-            let slice = input[i..i + len].into_iter().collect::<String>();
-            let reserved = (vec!["and", "or"])
-                .into_iter()
-                .map(|s| s.to_owned())
-                .collect::<HashSet<String>>();
-            if reserved.contains(&slice) {
-                tokens.push(TkReserved(slice));
-            } else {
-                tokens.push(TkLetter(slice));
+            _ => {
+                let len = input[i..]
+                    .iter()
+                    .take_while(|&&c| !c.is_whitespace() && !matches!(c, ')' | '-'))
+                    .filter(|c| {
+                        assert!(c.is_ascii_alphabetic());
+                        true
+                    }) // nothing
+                    .count();
+                dbg!(len);
+                let slice = input[i..i + len].into_iter().collect::<String>();
+                let reserved = (vec!["and", "or"])
+                    .into_iter()
+                    .map(|s| s.to_owned())
+                    .collect::<HashSet<String>>();
+                if reserved.contains(&slice) {
+                    tokens.push(TkReserved(slice));
+                } else {
+                    tokens.push(TkLetter(slice));
+                }
+                i += len;
             }
-            i += len;
         }
     }
     tokens
@@ -173,7 +180,7 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Box<Node> {
-        let lhs = self.parse_and_or();
+        let lhs = dbg!(self.parse_and_or());
         println!("{:?}", self);
         if let Ok(true) = dbg!(self.consume("->")) {
             // consume
@@ -293,5 +300,10 @@ fn test6() {
             then(not(letter("S")), letter("Q")),
             or(letter("R"), letter("C"))
         )
+    );
+
+    assert_eq!(
+        tokenize_and_parse("(((!P) and Q) -> R) "),
+        then(and(not(letter("P")), letter("Q")), letter("R"))
     );
 }
