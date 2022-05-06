@@ -1,4 +1,4 @@
-use std::{collections::HashSet, env::current_exe, fmt::format, io};
+use std::{borrow::BorrowMut, collections::HashSet, io};
 
 fn main() {
     let mut line = String::new();
@@ -9,14 +9,14 @@ fn main() {
     let tokens = tokenize(line);
     println!("{:?}", tokens);
     let mut parser = Parser::new(tokens);
-    let node = parser.parse_expr();
-    println!("{:?}", node);
+    parser.parse();
+    println!("{:?}", parser.nodes);
 }
 
 #[derive(Debug)]
 enum Token {
-    TkLetter(String),
-    TkReserved(String),
+    Letter(String),
+    Reserved(String),
 }
 
 fn tokenize(input: String) -> Vec<Token> {
@@ -36,27 +36,19 @@ fn tokenize(input: String) -> Vec<Token> {
         }
 
         match *current_char {
-            '-' | '!' | '(' | ')' => {
-                // punctuator at least
-                // count length of punctuator
-                let len = input[(i + 1)..]
-                    .iter()
-                    .take_while(|&&c| !matches!(c, ' ' | '\n' | '\t' | 'a'..='z' | 'A'..='Z' | '!'))
-                    .count()
-                    + 1;
-                dbg!(len);
-                let slice = input[i..i + len].into_iter().collect::<String>();
-                dbg!(&slice);
-                let reserved = (vec!["->", "!", "(", ")"])
-                    .into_iter()
-                    .map(|s| s.to_owned())
-                    .collect::<HashSet<String>>();
-                if reserved.contains(&slice) {
-                    tokens.push(TkReserved(slice));
-                }
-                i += len;
+            '-' => {
+                assert!(matches!(input.get(i + 1), Some('>')));
+                tokens.push(Token::Reserved("->".to_string()));
+                i += 2;
+                continue;
+            }
+            '!' | '(' | ')' => {
+                tokens.push(Token::Reserved((*current_char).to_string()));
+                i += 1;
+                continue;
             }
             _ => {
+                // token written in alphabet
                 let len = input[i..]
                     .iter()
                     .take_while(|&&c| !c.is_whitespace() && !matches!(c, ')' | '-'))
@@ -66,15 +58,15 @@ fn tokenize(input: String) -> Vec<Token> {
                     }) // nothing
                     .count();
                 dbg!(len);
-                let slice = input[i..i + len].into_iter().collect::<String>();
+                let slice = input[i..i + len].iter().collect::<String>();
                 let reserved = (vec!["and", "or"])
                     .into_iter()
                     .map(|s| s.to_owned())
                     .collect::<HashSet<String>>();
                 if reserved.contains(&slice) {
-                    tokens.push(TkReserved(slice));
+                    tokens.push(Token::Reserved(slice));
                 } else {
-                    tokens.push(TkLetter(slice));
+                    tokens.push(Token::Letter(slice));
                 }
                 i += len;
             }
@@ -86,38 +78,38 @@ fn tokenize(input: String) -> Vec<Token> {
 #[derive(Debug)]
 struct Parser {
     tokens: Vec<Token>,
-    nodes: Vec<Node>,
+    nodes: Vec<Box<Node>>,
     position: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum Node {
-    NdThen(Box<Node>, Box<Node>),
-    NdAnd(Box<Node>, Box<Node>),
-    NdOr(Box<Node>, Box<Node>),
-    NdNot(Box<Node>),
-    NdLetter(String),
+    Then(Box<Node>, Box<Node>),
+    And(Box<Node>, Box<Node>),
+    Or(Box<Node>, Box<Node>),
+    Not(Box<Node>),
+    Letter(String),
 }
 
 impl Node {
     fn new_then(lhs: Box<Self>, rhs: Box<Self>) -> Box<Self> {
-        Box::new(Self::NdThen(lhs, rhs))
+        Box::new(Self::Then(lhs, rhs))
     }
 
     fn new_and(lhs: Box<Self>, rhs: Box<Self>) -> Box<Self> {
-        Box::new(Self::NdAnd(lhs, rhs))
+        Box::new(Self::And(lhs, rhs))
     }
 
     fn new_or(lhs: Box<Self>, rhs: Box<Self>) -> Box<Self> {
-        Box::new(Self::NdOr(lhs, rhs))
+        Box::new(Self::Or(lhs, rhs))
     }
 
     fn new_not(operand: Box<Self>) -> Box<Self> {
-        Box::new(Self::NdNot(operand))
+        Box::new(Self::Not(operand))
     }
 
     fn new_letter(name: String) -> Box<Self> {
-        Box::new(Self::NdLetter(name))
+        Box::new(Self::Letter(name))
     }
 }
 
@@ -139,7 +131,7 @@ impl Parser {
         dbg!(self.tokens.get(self.position));
         if let Some(token) = self.tokens.get(self.position) {
             match token {
-                TkReserved(s) => {
+                Token::Reserved(s) => {
                     if dbg!(s) == dbg!(punct) {
                         self.position += 1;
                         Ok(true)
@@ -147,15 +139,15 @@ impl Parser {
                         Ok(false)
                     }
                 }
-                TkLetter(_) => Ok(false),
+                Token::Letter(_) => Ok(false),
             }
         } else {
-            Err(format!("self.tokens.get(self.position) must not be None"))
+            Err("self.tokens.get(self.position) must not be None".to_string())
         }
     }
 
     fn expect_name(&mut self) -> String {
-        let name = if let Some(Token::TkLetter(name)) = self.get_token() {
+        let name = if let Some(Token::Letter(name)) = self.get_token() {
             name.clone()
         } else {
             panic!("This is not TkLetter");
@@ -171,12 +163,17 @@ impl Parser {
     fn expect_letter(&mut self) {
         if let Some(token) = self.get_token() {
             match token {
-                Token::TkLetter(_) => return,
-                Token::TkReserved(_) => panic!("Expected TkLetter but got TkReserved"),
+                Token::Letter(_) => (),
+                Token::Reserved(_) => panic!("Expected TkLetter but got TkReserved"),
             }
         } else {
             panic!("Token is None");
         }
+    }
+
+    fn parse(&mut self) {
+        let node = self.parse_expr();
+        self.nodes.push(node);
     }
 
     fn parse_expr(&mut self) -> Box<Node> {
@@ -223,28 +220,27 @@ impl Parser {
 fn tokenize_and_parse(s: &str) -> Box<Node> {
     let tokens = tokenize(s.to_string());
     let mut parser = Parser::new(tokens);
-    let node = parser.parse_expr();
-    node
+    parser.parse_expr()
 }
 
 fn letter(s: &str) -> Box<Node> {
-    Box::new(Node::NdLetter(s.to_string()))
+    Box::new(Node::Letter(s.to_string()))
 }
 
 fn not(node: Box<Node>) -> Box<Node> {
-    Box::new(Node::NdNot(node))
+    Box::new(Node::Not(node))
 }
 
 fn and(lhs: Box<Node>, rhs: Box<Node>) -> Box<Node> {
-    Box::new(Node::NdAnd(lhs, rhs))
+    Box::new(Node::And(lhs, rhs))
 }
 
 fn or(lhs: Box<Node>, rhs: Box<Node>) -> Box<Node> {
-    Box::new(Node::NdOr(lhs, rhs))
+    Box::new(Node::Or(lhs, rhs))
 }
 
 fn then(lhs: Box<Node>, rhs: Box<Node>) -> Box<Node> {
-    Box::new(Node::NdThen(lhs, rhs))
+    Box::new(Node::Then(lhs, rhs))
 }
 
 #[test]
