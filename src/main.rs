@@ -1,4 +1,8 @@
-use std::{borrow::BorrowMut, collections::HashSet, io};
+use core::num;
+use std::{
+    collections::{BTreeMap, BTreeSet, HashSet},
+    io,
+};
 
 fn main() {
     let mut line = String::new();
@@ -10,7 +14,7 @@ fn main() {
     println!("{:?}", tokens);
     let mut parser = Parser::new(tokens);
     parser.parse();
-    println!("{:?}", parser.nodes);
+    println!("{:?}", parser.exprs);
 }
 
 #[derive(Debug)]
@@ -21,7 +25,6 @@ enum Token {
 
 fn tokenize(input: String) -> Vec<Token> {
     // tokenize
-    use Token::*;
     let input = input.chars().collect::<Vec<char>>();
 
     let mut tokens = Vec::<Token>::new();
@@ -78,11 +81,11 @@ fn tokenize(input: String) -> Vec<Token> {
 #[derive(Debug)]
 struct Parser {
     tokens: Vec<Token>,
-    nodes: Vec<Box<Node>>,
+    exprs: Vec<Expr>,
     position: usize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Node {
     Then(Box<Node>, Box<Node>),
     And(Box<Node>, Box<Node>),
@@ -113,12 +116,85 @@ impl Node {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct Expr {
+    node: Box<Node>,
+    vars: BTreeSet<Box<Node>>,
+}
+
+impl Expr {
+    pub const fn new(node: Box<Node>, vars: BTreeSet<Box<Node>>) -> Self {
+        Self { node, vars }
+    }
+
+    pub fn calc(&self, input: BTreeMap<String, bool>) -> Result<bool, ()> {
+        if input.len() != self.vars.len() {
+            dbg!(input);
+            return Err(());
+        }
+
+        Ok(Self::calc_expr(&self.node, &input))
+    }
+
+    fn calc_expr(node: &Box<Node>, input: &BTreeMap<String, bool>) -> bool {
+        match &**node {
+            Node::Then(lhs, rhs) => {
+                Node::calc_then(Self::calc_expr(&lhs, input), Self::calc_expr(&rhs, input))
+            }
+            Node::And(lhs, rhs) => {
+                Node::calc_and(Self::calc_expr(&lhs, input), Self::calc_expr(&rhs, input))
+            }
+            Node::Or(lhs, rhs) => {
+                Node::calc_or(Self::calc_expr(&lhs, input), Self::calc_expr(&rhs, input))
+            }
+            Node::Not(expr) => Node::calc_not(Self::calc_expr(&expr, input)),
+            Node::Letter(str) => *input
+                .get(str)
+                .expect(&format!("Unexpected Node::Letter, input was {:?}", input)),
+        }
+    }
+}
+
+impl Node {
+    fn calc_then(lhs: bool, rhs: bool) -> bool {
+        match (lhs, rhs) {
+            (true, true) => true,
+            (true, false) => false,
+            (false, true) => true,
+            (false, false) => true,
+        }
+    }
+
+    fn calc_and(lhs: bool, rhs: bool) -> bool {
+        match (lhs, rhs) {
+            (true, true) => true,
+            (true, false) => false,
+            (false, true) => false,
+            (false, false) => false,
+        }
+    }
+
+    fn calc_or(lhs: bool, rhs: bool) -> bool {
+        match (lhs, rhs) {
+            (true, true) => true,
+            (true, false) => true,
+            (false, true) => true,
+            (false, false) => false,
+        }
+    }
+
+    #[inline]
+    fn calc_not(expr: bool) -> bool {
+        return !expr;
+    }
+}
+
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             position: 0,
-            nodes: Vec::new(),
+            exprs: Vec::new(),
         }
     }
 
@@ -126,7 +202,6 @@ impl Parser {
     // tokens.get(self.position) is None then return Err()
     fn consume(&mut self, punct: &str) -> Result<bool, String> {
         dbg!("consume!!");
-        use Token::*;
         dbg!(&self.tokens);
         dbg!(self.tokens.get(self.position));
         if let Some(token) = self.tokens.get(self.position) {
@@ -136,6 +211,8 @@ impl Parser {
                         self.position += 1;
                         Ok(true)
                     } else {
+                        println!("{:?}", token);
+                        dbg!(token);
                         Ok(false)
                     }
                 }
@@ -160,146 +237,262 @@ impl Parser {
         self.tokens.get(self.position)
     }
 
-    fn expect_letter(&mut self) {
-        if let Some(token) = self.get_token() {
-            match token {
-                Token::Letter(_) => (),
-                Token::Reserved(_) => panic!("Expected TkLetter but got TkReserved"),
-            }
-        } else {
-            panic!("Token is None");
-        }
-    }
-
     fn parse(&mut self) {
-        let node = self.parse_expr();
-        self.nodes.push(node);
+        let mut vars = BTreeSet::new();
+
+        let node = self.parse_expr(&mut vars);
+        self.exprs.push(Expr::new(node, vars));
     }
 
-    fn parse_expr(&mut self) -> Box<Node> {
-        let lhs = dbg!(self.parse_and_or());
+    fn parse_expr(&mut self, vars: &mut BTreeSet<Box<Node>>) -> Box<Node> {
+        let lhs = dbg!(self.parse_and_or(vars));
         println!("{:?}", self);
         if let Ok(true) = dbg!(self.consume("->")) {
             // consume
-            Node::new_then(lhs, self.parse_and_or())
+            Node::new_then(lhs, self.parse_and_or(vars))
         } else {
             lhs
         }
     }
 
-    fn parse_and_or(&mut self) -> Box<Node> {
-        let lhs = self.parse_not();
+    fn parse_and_or(&mut self, vars: &mut BTreeSet<Box<Node>>) -> Box<Node> {
+        let lhs = self.parse_not(vars);
         if let Ok(true) = self.consume("and") {
-            Node::new_and(lhs, self.parse_and_or())
+            Node::new_and(lhs, self.parse_and_or(vars))
         } else if let Ok(true) = self.consume("or") {
-            Node::new_or(lhs, self.parse_and_or())
+            Node::new_or(lhs, self.parse_and_or(vars))
         } else {
             lhs
         }
     }
 
-    fn parse_not(&mut self) -> Box<Node> {
+    fn parse_not(&mut self, vars: &mut BTreeSet<Box<Node>>) -> Box<Node> {
         if let Ok(true) = self.consume("!") {
-            Node::new_not(self.parse_primary())
+            Node::new_not(self.parse_primary(vars))
         } else {
-            self.parse_primary()
+            self.parse_primary(vars)
         }
     }
 
-    fn parse_primary(&mut self) -> Box<Node> {
+    fn parse_primary(&mut self, vars: &mut BTreeSet<Box<Node>>) -> Box<Node> {
         if let Ok(true) = self.consume("(") {
-            let node = self.parse_expr();
-            assert!(self.consume(")").expect("`)` expected"));
+            let node = self.parse_expr(vars);
+            dbg!(node.clone());
+            println!("{:?}", node.clone());
+            assert!(self
+                .consume(")")
+                .expect(&format!("`)` expected, but got {:?}", self.get_token())));
             node
         } else {
-            Node::new_letter(self.expect_name())
+            let node = Node::new_letter(self.expect_name());
+            dbg!(node.clone());
+            println!("{:?}", node.clone());
+            vars.insert(node.clone());
+            node
         }
     }
 }
 
-fn tokenize_and_parse(s: &str) -> Box<Node> {
-    let tokens = tokenize(s.to_string());
-    let mut parser = Parser::new(tokens);
-    parser.parse_expr()
+fn gen_table(expr: Expr) -> String {
+    let num_row = 2u128.pow(expr.vars.len().try_into().unwrap());
+    let mut vec_map = Vec::with_capacity(num_row as usize);
+
+    for (counter, letter) in (0u128..num_row).zip(expr.vars.iter()) {
+        let name = if let Node::Letter(name) = *letter.clone() {
+            name
+        } else {
+            panic!("Letter is not allowed here");
+        };
+        vec_map.push(BTreeMap::new());
+        for i in 0..128 {
+            let input = match (counter >> i) & 1 {
+                0 => true,
+                1 => false,
+                _ => panic!("Unhappenable bit number"),
+            };
+            vec_map.last_mut().unwrap().insert(name.clone(), input);
+        }
+    }
+    unimplemented!()
 }
 
+#[cfg(test)]
+fn calc(s: &str, input: BTreeMap<String, bool>) -> bool {
+    let expr = tokenize_and_parse(s);
+    println!("{:?}", expr.clone());
+    dbg!(expr.clone());
+    expr.calc(input).expect("Failed to calc")
+}
+
+#[cfg(test)]
+fn tokenize_and_parse(s: &str) -> Expr {
+    let tokens = tokenize(s.to_string());
+    let mut parser = Parser::new(tokens);
+    parser.parse();
+    parser.exprs.pop().unwrap()
+}
+
+#[cfg(test)]
 fn letter(s: &str) -> Box<Node> {
     Box::new(Node::Letter(s.to_string()))
 }
 
+#[cfg(test)]
 fn not(node: Box<Node>) -> Box<Node> {
     Box::new(Node::Not(node))
 }
 
+#[cfg(test)]
 fn and(lhs: Box<Node>, rhs: Box<Node>) -> Box<Node> {
     Box::new(Node::And(lhs, rhs))
 }
 
+#[cfg(test)]
 fn or(lhs: Box<Node>, rhs: Box<Node>) -> Box<Node> {
     Box::new(Node::Or(lhs, rhs))
 }
 
+#[cfg(test)]
 fn then(lhs: Box<Node>, rhs: Box<Node>) -> Box<Node> {
     Box::new(Node::Then(lhs, rhs))
 }
 
+#[cfg(test)]
+macro_rules! vars {
+    ( $( $str:expr ), *) => {{
+        let mut temp_set = BTreeSet::new();
+        $(
+            temp_set.insert(letter($str));
+        )*
+        temp_set
+    }};
+}
+
 #[test]
 fn test1() {
-    assert_eq!(tokenize_and_parse("P"), letter("P"));
+    assert_eq!(tokenize_and_parse("P"), Expr::new(letter("P"), vars!["P"]));
 }
 #[test]
 fn test2() {
-    assert_eq!(tokenize_and_parse("!P"), not(letter("P")));
+    assert_eq!(
+        tokenize_and_parse("!P"),
+        Expr::new(not(letter("P")), vars!["P"])
+    );
 }
 #[test]
 fn test3() {
-    assert_eq!(tokenize_and_parse("P and Q"), and(letter("P"), letter("Q")));
+    assert_eq!(
+        tokenize_and_parse("P and Q"),
+        Expr::new(and(letter("P"), letter("Q")), vars!["P", "Q"])
+    );
 }
 
 #[test]
 fn test4() {
-    assert_eq!(tokenize_and_parse("P or Q"), or(letter("P"), letter("Q")));
+    assert_eq!(
+        tokenize_and_parse("P or Q"),
+        Expr::new(or(letter("P"), letter("Q")), vars!["P", "Q"])
+    );
 }
 
 #[test]
 fn test5() {
-    assert_eq!(tokenize_and_parse("P -> Q"), then(letter("P"), letter("Q")));
+    assert_eq!(
+        tokenize_and_parse("P -> Q"),
+        Expr::new(then(letter("P"), letter("Q")), vars!["P", "Q"])
+    );
 }
 
 #[test]
 fn test6() {
     assert_eq!(
         tokenize_and_parse("!P -> Q"),
-        then(not(letter("P")), letter("Q"))
+        Expr::new(then(not(letter("P")), letter("Q")), vars!["P", "Q"])
     );
 
     assert_eq!(
         tokenize_and_parse("!P -> Q and R"),
-        then(not(letter("P")), and(letter("Q"), letter("R")))
+        Expr::new(
+            then(not(letter("P")), and(letter("Q"), letter("R"))),
+            vars!["P", "Q", "R"]
+        )
     );
 
     assert_eq!(
         tokenize_and_parse("(S -> Q) and R"),
-        and(then(letter("S"), letter("Q")), letter("R"))
+        Expr::new(
+            and(then(letter("S"), letter("Q")), letter("R")),
+            vars!["S", "Q", "R"]
+        )
     );
 
-    assert_eq!(tokenize_and_parse("P->Q"), then(letter("P"), letter("Q")));
+    assert_eq!(
+        tokenize_and_parse("P->Q"),
+        Expr::new(then(letter("P"), letter("Q")), vars!["P", "Q"])
+    );
 
     assert_eq!(
         tokenize_and_parse("(!S->Q)"),
-        then(not(letter("S")), letter("Q"))
+        Expr::new(then(not(letter("S")), letter("Q")), vars!["S", "Q"])
     );
 
     assert_eq!(
         tokenize_and_parse("(!S->Q)and (R or C)"),
-        and(
-            then(not(letter("S")), letter("Q")),
-            or(letter("R"), letter("C"))
+        Expr::new(
+            and(
+                then(not(letter("S")), letter("Q")),
+                or(letter("R"), letter("C"))
+            ),
+            vars!["S", "Q", "R", "C"]
         )
     );
 
     assert_eq!(
         tokenize_and_parse("(((!P) and Q) -> R) "),
-        then(and(not(letter("P")), letter("Q")), letter("R"))
+        Expr::new(
+            then(and(not(letter("P")), letter("Q")), letter("R")),
+            vars!["P", "Q", "R"]
+        )
     );
+}
+
+#[cfg(test)]
+fn inmap(names: Vec<&str>, inputs: Vec<bool>) -> BTreeMap<String, bool> {
+    names
+        .into_iter()
+        .zip(inputs.into_iter())
+        .fold(BTreeMap::new(), |mut map, (name, input)| {
+            map.insert(name.to_string(), input);
+            map
+        })
+}
+
+#[test]
+fn test7() {
+    assert_eq!(calc("P", inmap(vec!["P"], vec![true])), true);
+
+    assert_eq!(calc("!P", inmap(vec!["P"], vec![true])), false);
+
+    assert_eq!(
+        calc("P and Q", inmap(vec!["P", "Q"], vec![true, true])),
+        true
+    );
+
+    assert_eq!(
+        calc("P or Q", inmap(vec!["P", "Q"], vec![false, true])),
+        true
+    );
+
+    assert_eq!(
+        calc("P -> Q", inmap(vec!["P", "Q"], vec![false, false])),
+        true
+    );
+
+    assert_eq!(
+        calc(
+            "(P or Q) and (! P or ! Q)",
+            inmap(vec!["P", "Q"], vec![false, false])
+        ),
+        false
+    )
 }
