@@ -1,4 +1,3 @@
-use core::num;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     io,
@@ -136,21 +135,21 @@ impl Expr {
         Ok(Self::calc_expr(&self.node, &input))
     }
 
-    fn calc_expr(node: &Box<Node>, input: &BTreeMap<String, bool>) -> bool {
-        match &**node {
+    fn calc_expr(node: &Node, input: &BTreeMap<String, bool>) -> bool {
+        match &*node {
             Node::Then(lhs, rhs) => {
-                Node::calc_then(Self::calc_expr(&lhs, input), Self::calc_expr(&rhs, input))
+                Node::calc_then(Self::calc_expr(lhs, input), Self::calc_expr(rhs, input))
             }
             Node::And(lhs, rhs) => {
-                Node::calc_and(Self::calc_expr(&lhs, input), Self::calc_expr(&rhs, input))
+                Node::calc_and(Self::calc_expr(lhs, input), Self::calc_expr(rhs, input))
             }
             Node::Or(lhs, rhs) => {
-                Node::calc_or(Self::calc_expr(&lhs, input), Self::calc_expr(&rhs, input))
+                Node::calc_or(Self::calc_expr(lhs, input), Self::calc_expr(rhs, input))
             }
-            Node::Not(expr) => Node::calc_not(Self::calc_expr(&expr, input)),
+            Node::Not(expr) => Node::calc_not(Self::calc_expr(expr, input)),
             Node::Letter(str) => *input
                 .get(str)
-                .expect(&format!("Unexpected Node::Letter, input was {:?}", input)),
+                .unwrap_or_else(|| panic!("Unexpected Node::Letter, input was {:?}", input)),
         }
     }
 }
@@ -185,7 +184,7 @@ impl Node {
 
     #[inline]
     fn calc_not(expr: bool) -> bool {
-        return !expr;
+        !expr
     }
 }
 
@@ -278,15 +277,13 @@ impl Parser {
         if let Ok(true) = self.consume("(") {
             let node = self.parse_expr(vars);
             dbg!(node.clone());
-            println!("{:?}", node.clone());
             assert!(self
                 .consume(")")
-                .expect(&format!("`)` expected, but got {:?}", self.get_token())));
+                .unwrap_or_else(|_| panic!("`)` expected, but got {:?}", self.get_token())));
             node
         } else {
             let node = Node::new_letter(self.expect_name());
             dbg!(node.clone());
-            println!("{:?}", node.clone());
             vars.insert(node.clone());
             node
         }
