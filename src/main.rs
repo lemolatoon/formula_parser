@@ -291,25 +291,44 @@ impl Parser {
 }
 
 fn gen_table(expr: Expr) -> String {
+    let var_len = expr.vars.len();
     let num_row = 2u128.pow(expr.vars.len().try_into().unwrap());
     let mut vec_map = Vec::with_capacity(num_row as usize);
 
+    let mut table = String::with_capacity(num_row as usize * 100);
     for (counter, letter) in (0u128..num_row).zip(expr.vars.iter()) {
         let name = if let Node::Letter(name) = *letter.clone() {
             name
         } else {
             panic!("Letter is not allowed here");
         };
-        vec_map.push(BTreeMap::new());
-        for i in 0..128 {
+        vec_map.push(Vec::new());
+        for i in 0..var_len {
             let input = match (counter >> i) & 1 {
                 0 => true,
                 1 => false,
-                _ => panic!("Unhappenable bit number"),
+                _ => panic!("Illegal bit number"),
             };
-            vec_map.last_mut().unwrap().insert(name.clone(), input);
+            vec_map.last_mut().unwrap().push((name.clone(), input));
         }
+        println!("{:?}", vec_map);
+        let last = vec_map.last().unwrap();
+        if counter == 1 {
+            let mut length = 0;
+            for (name, _) in last.iter() {
+                let str = &format!("| {} ", name);
+                length += str.len();
+                table.push_str(str);
+            }
+            table.push_str("\n");
+            for _ in 0..length {
+                table.push_str("|-");
+            }
+            table.push_str("|\n");
+        }
+        for (name, b) in last.iter() {}
     }
+
     unimplemented!()
 }
 
