@@ -3,26 +3,13 @@ use std::{
     io,
 };
 
-fn main() {
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .expect("failed to read from stdin");
-
-    let tokens = tokenize(line);
-    println!("{:?}", tokens);
-    let mut parser = Parser::new(tokens);
-    parser.parse();
-    println!("{:?}", parser.exprs);
-}
-
 #[derive(Debug)]
-enum Token {
+pub enum Token {
     Letter(String),
     Reserved(String),
 }
 
-fn tokenize(input: String) -> Vec<Token> {
+pub fn tokenize(input: String) -> Vec<Token> {
     // tokenize
     let input = input.chars().collect::<Vec<char>>();
 
@@ -78,14 +65,14 @@ fn tokenize(input: String) -> Vec<Token> {
 }
 
 #[derive(Debug)]
-struct Parser {
+pub struct Parser {
     tokens: Vec<Token>,
-    exprs: Vec<Expr>,
+    pub exprs: Vec<Expr>,
     position: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Node {
+pub enum Node {
     Then(Box<Node>, Box<Node>),
     And(Box<Node>, Box<Node>),
     Or(Box<Node>, Box<Node>),
@@ -116,7 +103,7 @@ impl Node {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct Expr {
+pub struct Expr {
     node: Box<Node>,
     vars: BTreeSet<Box<Node>>,
 }
@@ -189,7 +176,7 @@ impl Node {
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             position: 0,
@@ -236,7 +223,7 @@ impl Parser {
         self.tokens.get(self.position)
     }
 
-    fn parse(&mut self) {
+    pub fn parse(&mut self) {
         let mut vars = BTreeSet::new();
 
         let node = self.parse_expr(&mut vars);
